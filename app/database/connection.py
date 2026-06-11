@@ -1,8 +1,16 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
+from dotenv import load_dotenv
+
+
+
+
+load_dotenv()
+
+
 
 # Replace 'yourpassword' with the password you used in SQL Shell
-DATABASE_URL = "postgresql://postgres:geobhavan@localhost:5432/task_manager"
+
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

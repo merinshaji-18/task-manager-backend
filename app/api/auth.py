@@ -10,9 +10,7 @@ from pydantic import BaseModel
 
 # Security Config
 # NOTE: In a real app, keep this in an .env file
-SECRET_KEY = "YOUR_SUPER_SECRET_KEY_DONT_SHARE" 
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60
+
 
 # This tells FastAPI where to look for the token
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
