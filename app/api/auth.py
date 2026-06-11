@@ -7,6 +7,7 @@ import bcrypt # We use this directly now
 from app.database.connection import get_db
 from app.models.user import User
 from pydantic import BaseModel
+from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 
 # Security Config
 # NOTE: In a real app, keep this in an .env file
