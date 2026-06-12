@@ -13,7 +13,7 @@ app = FastAPI(title="Task Manager API")
 # 2. Add this middleware block BEFORE including the router
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], # Allows your Next.js frontend
+    allow_origins=["*"], # Allows your Next.js frontend
     allow_credentials=True,
     allow_methods=["*"], # Allows GET, POST, PUT, DELETE, etc.
     allow_headers=["*"], # Allows all headers
