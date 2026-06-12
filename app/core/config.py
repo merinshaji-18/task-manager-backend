@@ -4,9 +4,14 @@ from dotenv import load_dotenv
 # Load the .env file
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-BREVO_API_KEY = os.getenv("BREVO_API_KEY")
-# Convert to int because env variables are always strings
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+class Settings:
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    SECRET_KEY: str = os.getenv("SECRET_KEY")
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    
+    # NEW: Add Brevo Key here so auth.py can see it
+    BREVO_API_KEY: str = os.getenv("BREVO_API_KEY")
+
+# Create a single instance of the settings to be used across the app
+settings = Settings()
