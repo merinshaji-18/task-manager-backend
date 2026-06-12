@@ -1,6 +1,7 @@
 import os
 import random
 import bcrypt
+import smtplib
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Form
@@ -8,8 +9,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
-import sib_api_v3_sdk
-from sib_api_v3_sdk.rest import ApiException
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from app.database.connection import get_db
 from app.models.user import User
@@ -18,11 +19,6 @@ from app.core.config import settings
 # 1. Configuration
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 router = APIRouter(tags=["auth"])
-
-# Brevo Config
-configuration = sib_api_v3_sdk.Configuration()
-configuration.api_key['api-key'] = settings.BREVO_API_KEY
-api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
 
 # 2. Schemas
 class UserRegister(BaseModel):
@@ -49,7 +45,6 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
-# --- IMPORTANT: Move this function UP so routes can see it ---
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -84,26 +79,52 @@ def send_otp(request: EmailRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     db.commit()
 
-    sender_email = "taskmanagerworkspace@gmail.com"
-
-    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
-        to=[{"email": user.email}],
-        sender={"name": "Task Manager", "email": sender_email}, # Verified email here
-        subject="Your Login OTP",
-        html_content=f"<html><body><h1>Your OTP is {otp}</h1><p>Expires in 5 mins.</p></body></html>"
-    )
-    try:
-        api_instance.send_transac_email(send_smtp_email)
-        return {"message": "OTP sent"}
-    except ApiException as e:
-        print(f"Exception when calling Brevo: {e}") # This shows the real error in your VS Code terminal
-        raise HTTPException(status_code=500, detail=f"Brevo Error: {e.body}")
+    # --- SMTP CONFIGURATION (THE FIX) ---
     
+    smtp_server = "smtp-relay.brevo.com"
+    smtp_port = 587
+    smtp_username = "ae70ae001@smtp-brevo.com"
+    smtp_password = settings.BREVO_API_KEY # Brevo uses the API key as SMTP password
+    sender_email = "taskmanagerworkspace@gmail.com" 
+    
+    # Create the Email Message
+    message = MIMEMultipart()
+    message["From"] = f"Task Manager <{sender_email}>"
+    message["To"] = user.email
+    message["Subject"] = "Secure Login OTP"
+
+    html_content = f"""
+    <html>
+        <body style="font-family: sans-serif; padding: 20px;">
+            <h2 style="color: #5c59c2;">Workspace Authentication</h2>
+            <p>Your One-Time Password is:</p>
+            <h1 style="background: #f4f4f9; padding: 10px; display: inline-block; border-radius: 8px;">{otp}</h1>
+            <p>This code expires in 5 minutes.</p>
+        </body>
+    </html>
+    """
+    message.attach(MIMEText(html_content, "html"))
+
+    try:
+        # Connect and Send
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls() # Secure the connection
+            server.login(smtp_username, smtp_password)
+            server.send_message(message)
+        
+        return {"message": "OTP sent"}
+    except Exception as e:
+        print(f"SMTP Error: {str(e)}")
+        print(f"DEBUG: Using Username: {smtp_username}")
+        print(f"DEBUG: Key length: {len(smtp_password) if smtp_password else 0}")
+        raise HTTPException(status_code=500, detail="Mail Auth Failed")
+
 @router.post("/login", response_model=Token)
 def login(
     username: str = Form(...), 
@@ -119,8 +140,12 @@ def login(
         if not verify_password(password, user.hashed_password):
             raise HTTPException(status_code=401, detail="Incorrect password")
     elif otp:
-        if not user.otp_code or user.otp_code != otp or datetime.utcnow() > user.otp_expiry:
+        if not user.otp_code or user.otp_code != otp:
+            raise HTTPException(status_code=401, detail="Invalid OTP code")
+        
+        if datetime.utcnow() > user.otp_expiry:
             raise HTTPException(status_code=401, detail="OTP invalid or expired")
+        
         user.otp_code = None
         db.commit()
     else:
