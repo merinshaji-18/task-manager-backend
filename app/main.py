@@ -13,7 +13,10 @@ app = FastAPI(title="Task Manager API")
 # 2. Add this middleware block BEFORE including the router
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allows your Next.js frontend
+       allow_origins=[
+        "http://localhost:3000",
+        "https://task-manager-frontend-lemon-phi.vercel.app" # Add your exact Vercel URL here
+    ],
     allow_credentials=True,
     allow_methods=["*"], # Allows GET, POST, PUT, DELETE, etc.
     allow_headers=["*"], # Allows all headers
