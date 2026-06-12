@@ -1,52 +1,60 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+import random
+import bcrypt
+from datetime import datetime, timedelta
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Form
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
 from jose import JWTError, jwt
-import bcrypt # We use this directly now
+from pydantic import BaseModel, EmailStr, Field
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
+
 from app.database.connection import get_db
 from app.models.user import User
-from pydantic import BaseModel
-from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.config import settings
 
-# Security Config
-# NOTE: In a real app, keep this in an .env file
-
-
-# This tells FastAPI where to look for the token
+# OAuth2 scheme configuration
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 router = APIRouter(tags=["auth"])
 
+# Brevo Configuration
+configuration = sib_api_v3_sdk.Configuration()
+configuration.api_key['api-key'] = settings.BREVO_API_KEY
+api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
 # --- Schemas ---
+
 class UserRegister(BaseModel):
-    email: str
-    password: str
+    email: EmailStr
+    # Restriction: Minimum 6 characters
+    password: str = Field(..., min_length=6, description="Password must be at least 6 characters")
+
+class EmailRequest(BaseModel):
+    email: EmailStr
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-# --- Helper Functions (Fixed to avoid passlib errors) ---
+# --- Helper Functions ---
 
 def get_password_hash(password: str):
-    # Convert password to bytes, salt it, and hash it
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
-    hashed_password = bcrypt.hashpw(password=pwd_bytes, salt=salt)
-    return hashed_password.decode('utf-8') # Store as string in DB
+    hashed_password = bcrypt.hashpw(pwd_bytes, salt)
+    return hashed_password.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str):
-    # Convert both to bytes and compare
-    password_byte_enc = plain_password.encode('utf-8')
-    hashed_password_byte_enc = hashed_password.encode('utf-8')
-    return bcrypt.checkpw(password_byte_enc, hashed_password_byte_enc)
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 # --- Routes ---
 
@@ -56,7 +64,6 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     if user_exists:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Hash the password using our new helper function
     new_user = User(
         email=user_data.email, 
         hashed_password=get_password_hash(user_data.password)
@@ -65,40 +72,90 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "User created successfully"}
 
+@router.post("/send-otp")
+def send_otp(request: EmailRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == request.email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Generate 6-digit OTP
+    otp = str(random.randint(100000, 999999))
+    user.otp_code = otp
+    user.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
+    db.commit()
+
+    # Send via Brevo
+    send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+        to=[{"email": user.email}],
+        sender={"name": "Task Manager", "email": "your-verified-email@example.com"}, # Must be verified in Brevo
+        subject="Your Login OTP",
+        html_content=f"""
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee;">
+            <h2>Secure Login</h2>
+            <p>Your OTP for Project Workspace is:</p>
+            <h1 style="color: #5c59c2;">{otp}</h1>
+            <p>This code expires in 5 minutes.</p>
+        </div>
+        """
+    )
+
+    try:
+        api_instance.send_transac_email(send_smtp_email)
+        return {"message": "OTP sent to email"}
+    except ApiException:
+        raise HTTPException(status_code=500, detail="Failed to send email")
+
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
+def login(
+    username: str = Form(...), 
+    password: Optional[str] = Form(None), 
+    otp: Optional[str] = Form(None), 
+    db: Session = Depends(get_db)
+):
+    user = db.query(User).filter(User.email == username).first()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email")
+
+    # Flow 1: Login with Password
+    if password:
+        if not verify_password(password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Incorrect password")
     
-    # Verify using our new helper function
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail="Incorrect email or password"
-        )
+    # Flow 2: Login with OTP
+    elif otp:
+        if not user.otp_code or user.otp_code != otp:
+            raise HTTPException(status_code=401, detail="Invalid OTP code")
+        
+        if datetime.utcnow() > user.otp_expiry:
+            raise HTTPException(status_code=401, detail="OTP has expired")
+        
+        # Clear OTP after successful use
+        user.otp_code = None
+        user.otp_expiry = None
+        db.commit()
+    
+    else:
+        raise HTTPException(status_code=400, detail="Provide either password or OTP")
     
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
-# --- Dependency to get current user ---
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
-        raise credentials_exception
-    return user
-# Add this to app/api/auth.py
 @router.get("/users/me")
 def get_me(current_user: User = Depends(get_current_user)):
     return {"email": current_user.email}
+
+# --- Security Dependency ---
+
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
