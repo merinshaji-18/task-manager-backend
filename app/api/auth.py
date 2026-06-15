@@ -88,7 +88,7 @@ def send_otp(request: EmailRequest, db: Session = Depends(get_db)):
     # --- SMTP CONFIGURATION (THE FIX) ---
     
     smtp_server = "smtp-relay.brevo.com"
-    smtp_port = 587
+    smtp_port = 2525
     smtp_username = "ae70ae001@smtp-brevo.com"
     smtp_password = settings.BREVO_API_KEY # Brevo uses the API key as SMTP password
     sender_email = "taskmanagerworkspace@gmail.com" 
