@@ -10,6 +10,8 @@ class User(Base):
     otp_code = Column(String, nullable=True)
     otp_expiry = Column(DateTime, nullable=True)
     
+    full_name = Column(String, nullable=True)
+    bio = Column(String, nullable=True)
     # Link tasks to this user
     tasks = relationship("Task", back_populates="owner")
 

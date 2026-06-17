@@ -13,14 +13,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from app.database.connection import get_db
-from app.models.user import User, PendingUser # Ensure PendingUser is in models/user.py
+from app.models.user import User, PendingUser
 from app.core.config import settings
 
 # 1. Configuration
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 router = APIRouter(tags=["auth"])
 
-# 2. Schemas
+# 2. Schemas (DEFINED FIRST TO AVOID NameError)
 class UserRegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
@@ -32,14 +32,18 @@ class UserVerifyRegister(BaseModel):
 class EmailRequest(BaseModel):
     email: EmailStr
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
     otp: str
     new_password: str = Field(..., min_length=6)
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
 
 # 3. Helper Functions
 def get_password_hash(password: str):
@@ -62,7 +66,6 @@ def send_smtp_email(to_email: str, subject: str, body_html: str):
         msg['From'] = f"Workspace <{sender_email}>"
         msg['To'] = to_email
         msg.attach(MIMEText(body_html, "html"))
-        # Using port 587 for TLS
         with smtplib.SMTP("smtp-relay.brevo.com", 2525) as server:
             server.starttls()
             server.login("ae70ae001@smtp-brevo.com", settings.BREVO_API_KEY)
@@ -71,22 +74,14 @@ def send_smtp_email(to_email: str, subject: str, body_html: str):
         print(f"SMTP Error: {e}")
         raise HTTPException(status_code=500, detail="Email delivery failed")
 
-# --- Security Dependency ---
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
-        if email is None: raise credentials_exception
-    except JWTError: raise credentials_exception
-    
-    user = db.query(User).filter(User.email == email).first()
-    if user is None: raise credentials_exception
-    return user
+        user = db.query(User).filter(User.email == email).first()
+        if user is None: raise HTTPException(status_code=401)
+        return user
+    except JWTError: raise HTTPException(status_code=401)
 
 # 4. Routes
 
@@ -94,55 +89,35 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 @router.post("/register/request")
 def request_registration(data: UserRegisterRequest, db: Session = Depends(get_db)):
-    # Check if user already exists in main table
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
     
     otp = str(random.randint(100000, 999999))
     hashed_pwd = get_password_hash(data.password)
     
-    # Save to PendingUser table (Upsert logic)
     pending = db.query(PendingUser).filter(PendingUser.email == data.email).first()
     if pending:
         pending.otp_code = otp
         pending.hashed_password = hashed_pwd
         pending.otp_expiry = datetime.utcnow() + timedelta(minutes=5)
     else:
-        pending = PendingUser(
-            email=data.email,
-            hashed_password=hashed_pwd,
-            otp_code=otp,
-            otp_expiry=datetime.utcnow() + timedelta(minutes=5)
-        )
+        pending = PendingUser(email=data.email, hashed_password=hashed_pwd, otp_code=otp, otp_expiry=datetime.utcnow() + timedelta(minutes=5))
         db.add(pending)
     
     db.commit()
-    
-    send_smtp_email(
-        data.email, 
-        "Verify your Workspace registration", 
-        f"<html><body><h1>Verification Code: {otp}</h1><p>This code expires in 5 minutes.</p></body></html>"
-    )
+    send_smtp_email(data.email, "Verification Code", f"<html><body><h1>Verification Code: {otp}</h1></body></html>")
     return {"message": "OTP sent to email"}
 
 @router.post("/register/verify")
 def verify_registration(data: UserVerifyRegister, db: Session = Depends(get_db)):
     pending = db.query(PendingUser).filter(PendingUser.email == data.email).first()
-    
-    if not pending or pending.otp_code != data.otp:
-        raise HTTPException(status_code=401, detail="Invalid verification code")
-    
-    if datetime.utcnow() > pending.otp_expiry:
-        raise HTTPException(status_code=401, detail="Code has expired")
+    if not pending or pending.otp_code != data.otp or datetime.utcnow() > pending.otp_expiry:
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
 
-    # Create the permanent user
     new_user = User(email=pending.email, hashed_password=pending.hashed_password)
     db.add(new_user)
-    
-    # Clean up pending table
     db.delete(pending)
     db.commit()
-    
     return {"message": "Account verified and created successfully!"}
 
 # --- PASSWORD RECOVERY ---
@@ -151,58 +126,45 @@ def verify_registration(data: UserVerifyRegister, db: Session = Depends(get_db))
 def forgot_password(request: EmailRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == request.email).first()
     if not user:
-        raise HTTPException(status_code=404, detail="This email is not registered.")
+        raise HTTPException(status_code=404, detail="Email not found")
     
     otp = str(random.randint(100000, 999999))
     user.otp_code = otp
     user.otp_expiry = datetime.utcnow() + timedelta(minutes=10)
     db.commit()
 
-    send_smtp_email(
-        user.email,
-        "Password Reset Request",
-        f"<html><body><h2>Reset Code: {otp}</h2><p>Valid for 10 minutes.</p></body></html>"
-    )
+    send_smtp_email(user.email, "Password Reset Request", f"<html><body><h2>Reset Code: {otp}</h2></body></html>")
     return {"message": "Reset OTP sent"}
 
 @router.post("/reset-password")
 def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == data.email).first()
-    if not user or user.otp_code != data.otp:
-        raise HTTPException(status_code=401, detail="Invalid OTP")
-    if datetime.utcnow() > user.otp_expiry:
-        raise HTTPException(status_code=401, detail="Expired")
+    if not user or user.otp_code != data.otp: raise HTTPException(status_code=401, detail="Invalid OTP")
+    if datetime.utcnow() > user.otp_expiry: raise HTTPException(status_code=401, detail="Expired")
     
     user.hashed_password = get_password_hash(data.new_password)
     user.otp_code = None
     db.commit()
-    return {"message": "Password updated successfully"}
+    return {"message": "Password updated"}
 
-# --- AUTH & IDENTITY ---
+# --- AUTH & USER ---
 
 @router.post("/login", response_model=Token)
-def login(
-    username: str = Form(...), 
-    password: Optional[str] = Form(None), 
-    otp: Optional[str] = Form(None), 
-    db: Session = Depends(get_db)
-):
+def login(username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.email == username).first()
-    if not user: raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    if password:
-        if not verify_password(password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Incorrect password")
-    elif otp:
-        if user.otp_code != otp or datetime.utcnow() > user.otp_expiry:
-            raise HTTPException(status_code=401, detail="OTP invalid or expired")
-        user.otp_code = None
-        db.commit()
-    else:
-        raise HTTPException(status_code=400, detail="Provide password or OTP")
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
     
-    return {"access_token": create_access_token({"sub": user.email}), "token_type": "bearer"}
+    access_token = create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/users/me")
 def get_me(current_user: User = Depends(get_current_user)):
-    return {"email": current_user.email}
+    return {"email": current_user.email, "full_name": current_user.full_name, "bio": current_user.bio}
+
+@router.put("/users/profile")
+def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if data.full_name is not None: current_user.full_name = data.full_name
+    if data.bio is not None: current_user.bio = data.bio
+    db.commit()
+    return {"message": "Profile updated"}
