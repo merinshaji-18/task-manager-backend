@@ -44,6 +44,7 @@ class Token(BaseModel):
 class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     bio: Optional[str] = None
+    profile_pic: Optional[str] = None
 
 # 3. Helper Functions
 def get_password_hash(password: str):
@@ -158,13 +159,25 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get("/users/me")
-def get_me(current_user: User = Depends(get_current_user)):
-    return {"email": current_user.email, "full_name": current_user.full_name, "bio": current_user.bio}
-
 @router.put("/users/profile")
 def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    print(f"DEBUG: Received Profile Pic URL: {data.profile_pic[:50] if data.profile_pic else 'None'}...")
+    
     if data.full_name is not None: current_user.full_name = data.full_name
     if data.bio is not None: current_user.bio = data.bio
+    if data.profile_pic is not None: current_user.profile_pic = data.profile_pic
+    
+    db.add(current_user)
     db.commit()
-    return {"message": "Profile updated"}
+    db.refresh(current_user)
+    return {"message": "Success"}
+
+# Update get_me to return the picture
+@router.get("/users/me")
+def get_me(current_user: User = Depends(get_current_user)):
+    return {
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "bio": current_user.bio,
+        "profile_pic": current_user.profile_pic # Added this
+    }
