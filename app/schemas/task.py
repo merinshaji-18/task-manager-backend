@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional,List
 from datetime import datetime
 
 class TaskBase(BaseModel):
@@ -22,10 +22,27 @@ class TaskUpdate(BaseModel):
     category: Optional[str] = None
     due_date: Optional[datetime] = None
 
+class SubTaskResponse(BaseModel):
+    id: int
+    title: str
+    is_completed: bool
+    
+    class Config:
+        from_attributes = True
+        
+class AttachmentResponse(BaseModel):
+    id: int
+    file_url: str
+    file_name: str
+    file_type: str
+    class Config: from_attributes = True
+    
 class TaskResponse(TaskBase):
     id: int
     created_at: datetime
     owner_id: int
-
+    sub_tasks: List[SubTaskResponse] = []
+    attachments: List[AttachmentResponse] = []
     class Config:
         from_attributes = True # This tells Pydantic to read SQLAlchemy models
+

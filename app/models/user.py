@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean
 from sqlalchemy.orm import relationship
 from app.database.connection import Base
 
@@ -13,6 +13,7 @@ class User(Base):
     full_name = Column(String, nullable=True)
     bio = Column(String, nullable=True)
     profile_pic = Column(Text, nullable=True) # Stores the URL or Base64 string
+    is_admin = Column(Boolean, default=False)
     # Link tasks to this user
     tasks = relationship("Task", back_populates="owner")
 

@@ -4,7 +4,7 @@ from app.database.connection import engine, Base
 from app.api import tasks, auth
 from app.models.user import User # IMPORTANT: Import User
 from app.models.task import Task # IMPORTANT: Import Task 
-
+from app.core.scheduler import scheduler
 # Create the database tables
 Base.metadata.create_all(bind=engine)
 
@@ -26,6 +26,16 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(tasks.router)
 
+@app.on_event("startup")
+def start_scheduler():
+    if not scheduler.running:
+        scheduler.start()
+
+@app.on_event("shutdown")
+def stop_scheduler():
+    scheduler.shutdown()
+    
 @app.get("/")
 def home():
     return {"message": "Welcome to the Task Manager API"}
+

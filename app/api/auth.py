@@ -14,6 +14,7 @@ from email.mime.multipart import MIMEMultipart
 
 from app.database.connection import get_db
 from app.models.user import User, PendingUser
+from app.models.task import Task
 from app.core.config import settings
 
 # 1. Configuration
@@ -83,6 +84,11 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
         if user is None: raise HTTPException(status_code=401)
         return user
     except JWTError: raise HTTPException(status_code=401)
+
+def get_current_admin(current_user: User = Depends(get_current_user)):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="Access Denied: Administrative Privileges Required")
+    return current_user
 
 # 4. Routes
 
@@ -157,8 +163,11 @@ def login(username: str = Form(...), password: str = Form(...), db: Session = De
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
     access_token = create_access_token(data={"sub": user.email})
-    return {"access_token": access_token, "token_type": "bearer"}
-
+    return {
+    "access_token": create_access_token(data={"sub": user.email}), 
+    "token_type": "bearer",
+    "is_admin": user.is_admin # <--- Make sure this is returned on login!
+}
 @router.put("/users/profile")
 def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     print(f"DEBUG: Received Profile Pic URL: {data.profile_pic[:50] if data.profile_pic else 'None'}...")
@@ -179,5 +188,31 @@ def get_me(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "full_name": current_user.full_name,
         "bio": current_user.bio,
-        "profile_pic": current_user.profile_pic # Added this
+        "profile_pic": current_user.profile_pic,# Added this
+        "is_admin": current_user.is_admin
     }
+# --- 2. GLOBAL STATS ROUTE ---
+@router.get("/admin/analytics")
+def get_global_stats(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    user_count = db.query(User).filter(User.is_admin.isnot(True)).count()
+    task_count = db.query(Task).count()
+    from app.models.task import Attachment
+    file_count = db.query(Attachment).count()
+    
+    return {
+        "total_users": user_count,
+        "total_tasks": task_count,
+        "total_assets": file_count,
+        "server_time": datetime.utcnow()
+    }
+
+# --- 3. GLOBAL USER LIST ROUTE ---
+@router.get("/admin/users/all")
+def get_admin_user_list(db: Session = Depends(get_db), admin: User = Depends(get_current_admin)):
+    users = db.query(User).filter(User.id != admin.id).all()
+    return [{
+        "email": u.email,
+        "name": u.full_name,
+        "task_count": len(u.tasks),
+        "is_admin": u.is_admin
+    } for u in users]
