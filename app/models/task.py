@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database.connection import Base
@@ -15,9 +15,11 @@ class Task(Base):
     due_date = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     owner_id = Column(Integer, ForeignKey("users.id"))# Link to User
+    notification_sent = Column(Boolean, default=False)
     
     owner = relationship("User", back_populates="tasks") 
     attachments = relationship("Attachment", back_populates="task", cascade="all, delete-orphan")
+    sub_tasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan", lazy="joined")
 
 class Attachment(Base):
     __tablename__ = "attachments"
@@ -30,3 +32,13 @@ class Attachment(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     task = relationship("Task", back_populates="attachments")
+
+class SubTask(Base):
+    __tablename__ = "sub_tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"))
+    title = Column(String, nullable=False)
+    is_completed = Column(Boolean, default=False)
+
+    task = relationship("Task", back_populates="sub_tasks")
