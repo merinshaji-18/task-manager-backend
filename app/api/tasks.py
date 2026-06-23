@@ -20,6 +20,9 @@ class AttachmentCreate(BaseModel):
 class SubTaskCreate(BaseModel):
     title: str
 
+class SubTaskUpdate(BaseModel): # New for editing checkpoint text
+    title: str
+
 class SubTaskResponse(BaseModel):
     id: int
     title: str
@@ -30,18 +33,12 @@ class SubTaskResponse(BaseModel):
 def validate_future_date(due_date: Optional[datetime]):
     if due_date:
         now = datetime.now(timezone.utc)
-        # Ensure input date is timezone aware for comparison
         if due_date.tzinfo is None:
             due_date = due_date.replace(tzinfo=timezone.utc)
-        
         if due_date < now:
-            raise HTTPException(
-                status_code=400,
-                detail="Deadline must be a future date and time"
-            )
+            raise HTTPException(status_code=400, detail="Deadline must be a future date and time")
 
-# --- ROUTES ---
-
+# --- TASK ROUTES ---
 @router.post("/", response_model=TaskResponse)
 def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     validate_future_date(task.due_date)
@@ -69,41 +66,17 @@ def update_task_full(task_id: int, updated_data: TaskCreate, db: Session = Depen
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    
     validate_future_date(updated_data.due_date)
-    
-    if task.due_date != updated_data.due_date:
-        task.notification_sent = False
-        
     for key, value in updated_data.model_dump().items():
         setattr(task, key, value)
-    
     db.commit()
     db.refresh(task)
     return task
 
-@router.patch("/{task_id}", response_model=TaskResponse)
-def patch_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    db_task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
-    if not db_task:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    if task_update.due_date is not None:
-        validate_future_date(task_update.due_date)
-
-    update_data = task_update.model_dump(exclude_unset=True) 
-    for key, value in update_data.items():
-        setattr(db_task, key, value)
-
-    db.commit()
-    db.refresh(db_task)
-    return db_task
-
 @router.delete("/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
-    if not task:
-        raise HTTPException(status_code=404)
+    if not task: raise HTTPException(status_code=404)
     db.delete(task)
     db.commit()
     return {"message": "Deleted successfully"}
@@ -126,7 +99,7 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db), current
     db.commit()
     return {"message": "Removed"}
 
-# --- SUBTASKS ---
+# --- SUBTASKS (CHECKPOINTS) ---
 @router.post("/{task_id}/subtasks", response_model=SubTaskResponse)
 def add_subtask(task_id: int, data: SubTaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
@@ -144,3 +117,19 @@ def toggle_subtask(subtask_id: int, db: Session = Depends(get_db), current_user:
     sub.is_completed = not sub.is_completed
     db.commit()
     return {"is_completed": sub.is_completed}
+
+@router.put("/subtasks/{subtask_id}") # Update title
+def update_subtask(subtask_id: int, data: SubTaskUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sub = db.query(SubTask).filter(SubTask.id == subtask_id).first()
+    if not sub: raise HTTPException(status_code=404)
+    sub.title = data.title
+    db.commit()
+    return {"message": "Updated"}
+
+@router.delete("/subtasks/{subtask_id}") # Delete subtask
+def delete_subtask(subtask_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    sub = db.query(SubTask).filter(SubTask.id == subtask_id).first()
+    if not sub: raise HTTPException(status_code=404)
+    db.delete(sub)
+    db.commit()
+    return {"message": "Removed"}
