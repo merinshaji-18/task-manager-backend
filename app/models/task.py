@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database.connection import Base
 
 class Task(Base):
@@ -12,8 +12,8 @@ class Task(Base):
     status = Column(String, default="pending")
     priority = Column(String, default="medium") # low, medium, high, urgent
     category = Column(String, default="General") # Use this for Client Names or Projects
-    due_date = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    due_date = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     owner_id = Column(Integer, ForeignKey("users.id"))# Link to User
     notification_sent = Column(Boolean, default=False)
     
