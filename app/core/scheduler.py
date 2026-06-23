@@ -16,7 +16,7 @@ def send_deadline_email(user_email, task_title, due_time):
     msg['To'] = user_email
 
     try:
-        with smtplib.SMTP("smtp-relay.brevo.com", 587) as server:
+        with smtplib.SMTP("smtp-relay.brevo.com", 2525) as server:
             server.starttls()
             server.login("ae70ae001@smtp-brevo.com", settings.BREVO_API_KEY)
             server.send_message(msg)
