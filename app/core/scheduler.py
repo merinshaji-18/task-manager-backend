@@ -20,6 +20,7 @@ def send_deadline_email(user_email, task_title, due_time):
             server.starttls()
             server.login("ae70ae001@smtp-brevo.com", settings.BREVO_API_KEY)
             server.send_message(msg)
+            print("EMAIL FUNCTION CALLED")
     except Exception as e:
         print(f"Notification Error: {e}")
 
@@ -31,6 +32,20 @@ def check_deadlines():
         # CHANGE: Look 48 hours ahead instead of 1
         test_window = now + timedelta(hours=48) 
         
+        print(f"NOW: {now}")
+        print(f"WINDOW END: {test_window}")
+
+        all_tasks = db.query(Task).all()
+
+        print(f"TOTAL TASKS IN DB: {len(all_tasks)}")
+
+        for task in all_tasks:
+            print(
+                f"Task={task.title} | "
+                f"Due={task.due_date} | "
+                f"Status={task.status} | "
+                f"Notification={task.notification_sent}"
+            )
         upcoming_tasks = db.query(Task).filter(
             Task.due_date <= test_window,
             Task.due_date > now,
