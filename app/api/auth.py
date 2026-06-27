@@ -2,6 +2,7 @@ import os
 import random
 import bcrypt
 import smtplib
+import ssl
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Form
@@ -61,21 +62,32 @@ def create_access_token(data: dict):
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 def send_smtp_email(to_email: str, subject: str, body_html: str):
-    sender_email = "taskmanagerworkspace@gmail.com"
-    try:
-        msg = MIMEMultipart()
-        msg['Subject'] = subject
-        msg['From'] = f"Workspace <{sender_email}>"
-        msg['To'] = to_email
-        msg.attach(MIMEText(body_html, "html"))
-        with smtplib.SMTP("smtp-relay.brevo.com", 2525) as server:
-            server.starttls()
-            server.login("ae70ae001@smtp-brevo.com", settings.BREVO_API_KEY)
-            server.send_message(msg)
-    except Exception as e:
-        print(f"SMTP Error: {e}")
-        raise HTTPException(status_code=500, detail="Email delivery failed")
 
+    sender_email = settings.GMAIL_EMAIL
+    password = settings.GMAIL_APP_PASSWORD
+
+    message = MIMEMultipart()
+    message["From"] = f"Mission Control <{sender_email}>"
+    message["To"] = to_email
+    message["Subject"] = subject
+
+    message.attach(MIMEText(body_html, "html"))
+
+    try:
+        context = ssl.create_default_context()
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(sender_email, password)
+            server.send_message(message)
+
+        print(f"Email sent successfully to {to_email}")
+
+    except Exception as e:
+        print("EMAIL ERROR:", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Email delivery failed: {e}"
+        )
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])

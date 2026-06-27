@@ -7,7 +7,8 @@ from app.models.user import User
 from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
 from app.api.auth import get_current_user
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from app.core.email import send_task_created_email
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -46,6 +47,11 @@ def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: U
     db.add(new_task)
     db.commit()
     db.refresh(new_task)
+    if new_task.due_date:
+        try:
+            send_task_created_email(user_email=current_user.email,title=new_task.title,description=new_task.description or "",priority=new_task.priority,due_date=new_task.due_date)
+        except Exception as e:
+            print("Email Error:", e)
     return new_task
 
 @router.get("/", response_model=List[TaskResponse])
@@ -133,3 +139,28 @@ def delete_subtask(subtask_id: int, db: Session = Depends(get_db), current_user:
     db.delete(sub)
     db.commit()
     return {"message": "Removed"}
+@router.get("/notifications/upcoming")
+def get_upcoming_notifications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    now = datetime.now(timezone.utc)
+    next_24_hours = now + timedelta(hours=24)
+
+    tasks = db.query(Task).filter(
+        Task.owner_id == current_user.id,
+        Task.status == "pending",
+        Task.due_date.isnot(None),
+        Task.due_date >= now,
+        Task.due_date <= next_24_hours
+    ).all()
+
+    return [
+        {
+            "id": task.id,
+            "title": task.title,
+            "due_date": task.due_date,
+            "priority": task.priority
+        }
+        for task in tasks
+    ]

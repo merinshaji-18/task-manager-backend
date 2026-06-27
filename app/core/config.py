@@ -13,5 +13,8 @@ class Settings:
     # NEW: Add Brevo Key here so auth.py can see it
     BREVO_API_KEY: str = os.getenv("BREVO_API_KEY")
 
+    GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
+    GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+    
 # Create a single instance of the settings to be used across the app
 settings = Settings()
