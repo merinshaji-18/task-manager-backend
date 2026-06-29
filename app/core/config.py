@@ -15,6 +15,9 @@ class Settings:
 
     GMAIL_EMAIL = os.getenv("GMAIL_EMAIL")
     GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-    
+
+    GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+    GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI")
 # Create a single instance of the settings to be used across the app
 settings = Settings()

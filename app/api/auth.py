@@ -3,6 +3,7 @@ import random
 import bcrypt
 import smtplib
 import ssl
+from fastapi import APIRouter, Depends, Request
 from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Form
@@ -12,6 +13,9 @@ from jose import JWTError, jwt
 from pydantic import BaseModel, EmailStr, Field
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from app.core.google_calendar import create_google_flow
 
 from app.database.connection import get_db
 from app.models.user import User, PendingUser
@@ -228,3 +232,52 @@ def get_admin_user_list(db: Session = Depends(get_db), admin: User = Depends(get
         "task_count": len(u.tasks),
         "is_admin": u.is_admin
     } for u in users]
+
+@router.get("/google/connect")
+def google_connect(current_user: User = Depends(get_current_user)):
+    flow = create_google_flow()
+    authorization_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent" 
+    )
+    return {"url": authorization_url}
+
+@router.get("/google/callback")
+def google_callback(
+    code: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)):
+    flow = create_google_flow()
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+
+    # 2. Update the user in the database
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.google_access_token = credentials.token
+    
+    # Only update refresh token if it's provided (usually only on first connect)
+    if credentials.refresh_token:
+        user.google_refresh_token = credentials.refresh_token
+        
+    db.commit()
+
+    return {"message": "Google Calendar successfully connected!"}
+@router.post("/google/exchange-token")
+def exchange_token(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    code = data.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Code missing")
+
+    flow = create_google_flow()
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+
+    # Update the user in the database
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.google_access_token = credentials.token
+    if credentials.refresh_token:
+        user.google_refresh_token = credentials.refresh_token
+    
+    db.commit()
+    return {"message": "Google Calendar Connected Successfully!"}

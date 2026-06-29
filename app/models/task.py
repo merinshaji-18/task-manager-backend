@@ -16,7 +16,9 @@ class Task(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     owner_id = Column(Integer, ForeignKey("users.id"))# Link to User
     notification_sent = Column(Boolean, default=False)
-    
+    calendar_event_id = Column(String, nullable=True)
+    google_event_id = Column(String, nullable=True)
+
     owner = relationship("User", back_populates="tasks") 
     attachments = relationship("Attachment", back_populates="task", cascade="all, delete-orphan")
     sub_tasks = relationship("SubTask", back_populates="task", cascade="all, delete-orphan", lazy="joined")
