@@ -1,3 +1,5 @@
+import requests
+import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
@@ -9,6 +11,8 @@ from app.api.auth import get_current_user
 from pydantic import BaseModel
 from datetime import datetime, timezone, timedelta
 from app.core.email import send_task_created_email
+from app.core.google_calendar import create_calendar_event, delete_calendar_event, update_calendar_event
+from app.core.config import settings
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -42,22 +46,96 @@ def validate_future_date(due_date: Optional[datetime]):
 # --- TASK ROUTES ---
 @router.post("/", response_model=TaskResponse)
 def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    validate_future_date(task.due_date)
+    # --- NEW: COLLISION CHECK ---
+    if task.due_date:
+        # Check for any task starting 59 mins before or after this time
+        start_buffer = task.due_date - timedelta(minutes=59)
+        end_buffer = task.due_date + timedelta(minutes=59)
+        
+        conflict = db.query(Task).filter(
+            Task.owner_id == current_user.id,
+            Task.due_date > start_buffer,
+            Task.due_date < end_buffer
+        ).first()
+        
+        if conflict:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Time Slot Conflict: '{conflict.title}' is already scheduled in this window."
+            )
+    # --- END COLLISION CHECK ---
+
     new_task = Task(**task.model_dump(), owner_id=current_user.id)
     db.add(new_task)
     db.commit()
     db.refresh(new_task)
-    if new_task.due_date:
-        try:
-            send_task_created_email(user_email=current_user.email,title=new_task.title,description=new_task.description or "",priority=new_task.priority,due_date=new_task.due_date)
-        except Exception as e:
-            print("Email Error:", e)
+
+    if current_user.google_access_token and new_task.due_date:
+        event_id = create_calendar_event(current_user, new_task)
+        if event_id:
+            # SAVE THE ID TO THE DB IMMEDIATELY
+            new_task.google_event_id = event_id
+            db.add(new_task)
+            db.commit() 
+            db.refresh(new_task)
+            
     return new_task
 
 @router.get("/", response_model=List[TaskResponse])
 def get_tasks(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return db.query(Task).options(joinedload(Task.sub_tasks), joinedload(Task.attachments))\
              .filter(Task.owner_id == current_user.id).all()
+@router.get("/google/connect")
+def google_connect(current_user: User = Depends(get_current_user)):
+    base_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/calendar",
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    
+    # This turns the dictionary into a URL string
+    url = f"{base_url}?{urllib.parse.urlencode(params)}"
+    return {"url": url}
+
+@router.post("/google/exchange-token")
+def exchange_token(data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    
+    code = data.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Code missing")
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = {
+        "code": code,
+        "client_id": settings.GOOGLE_CLIENT_ID,
+        "client_secret": settings.GOOGLE_CLIENT_SECRET,
+        "redirect_uri": settings.GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }
+    response = requests.post(token_url, data=payload)
+    token_data = response.json()
+
+    if "error" in token_data:
+        print("--- GOOGLE API ERROR DETAILS ---")
+        print(token_data) 
+        print("--------------------------------")
+        raise HTTPException(status_code=400, detail=token_data.get("error_description"))
+    # 2. Extract tokens
+    access_token = token_data.get("access_token")
+    refresh_token = token_data.get("refresh_token")
+
+    # 3. Update the user in the database
+    user = db.query(User).filter(User.id == current_user.id).first()
+    user.google_access_token = token_data.get("access_token")
+    if token_data.get("refresh_token"):
+        user.google_refresh_token = token_data.get("refresh_token")
+    
+    db.commit()
+    return {"message": "Google Calendar Connected Successfully!"}
 
 @router.get("/{task_id}", response_model=TaskResponse)
 def get_task(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -72,17 +150,44 @@ def update_task_full(task_id: int, updated_data: TaskCreate, db: Session = Depen
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    # --- NEW: COLLISION CHECK FOR UPDATE ---
+    if updated_data.due_date:
+        start_buffer = updated_data.due_date - timedelta(minutes=59)
+        end_buffer = updated_data.due_date + timedelta(minutes=59)
+        
+        # Check for conflicts, but EXCLUDE the current task itself
+        conflict = db.query(Task).filter(
+            Task.owner_id == current_user.id,
+            Task.id != task_id, 
+            Task.due_date > start_buffer,
+            Task.due_date < end_buffer
+        ).first()
+        
+        if conflict:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Collision detected with '{conflict.title}'."
+            )
+    # --- END COLLISION CHECK ---
     validate_future_date(updated_data.due_date)
     for key, value in updated_data.model_dump().items():
         setattr(task, key, value)
     db.commit()
-    db.refresh(task)
+    if current_user.google_access_token:
+        if task.google_event_id:
+            update_calendar_event(current_user, task)
+        elif task.due_date: # If it didn't have a date before but has one now
+            task.google_event_id = create_calendar_event(current_user, task)
+            db.commit()
+            
     return task
 
 @router.delete("/{task_id}")
 def delete_task(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
     if not task: raise HTTPException(status_code=404)
+    if current_user.google_access_token and task.google_event_id:
+        delete_calendar_event(current_user, task)
     db.delete(task)
     db.commit()
     return {"message": "Deleted successfully"}

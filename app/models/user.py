@@ -14,6 +14,10 @@ class User(Base):
     bio = Column(String, nullable=True)
     profile_pic = Column(Text, nullable=True) # Stores the URL or Base64 string
     is_admin = Column(Boolean, default=False)
+
+    google_access_token = Column(Text, nullable=True)
+    google_refresh_token = Column(Text, nullable=True)
+    google_token_expiry = Column(DateTime, nullable=True)
     # Link tasks to this user
     tasks = relationship("Task", back_populates="owner")
 

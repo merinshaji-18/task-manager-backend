@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional,List
-from datetime import datetime
+from datetime import datetime,timezone
 
 class TaskBase(BaseModel):
     title: str
@@ -43,6 +43,14 @@ class TaskResponse(TaskBase):
     owner_id: int
     sub_tasks: List[SubTaskResponse] = []
     attachments: List[AttachmentResponse] = []
+    is_overdue: bool = False
+    @classmethod
+    def from_orm(cls, obj):
+        data = cls.model_validate(obj)
+        if obj.due_date and obj.status == "pending":
+            # Check if current time is past the due date
+            data.is_overdue = datetime.now(timezone.utc) > obj.due_date
+        return data
     class Config:
         from_attributes = True # This tells Pydantic to read SQLAlchemy models
 
