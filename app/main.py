@@ -35,4 +35,16 @@ def stop_scheduler():
 @app.get("/")
 def home():
     return {"message": "Welcome to the Task Manager API"}
-
+# Add this at the very top of main.py
+@app.get("/debug-db")
+def debug_db():
+    from sqlalchemy import text
+    from app.database.connection import engine
+    try:
+        with engine.connect() as conn:
+            # This will list every column the app SEES in the users table
+            result = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"))
+            columns = [row[0] for row in result]
+            return {"connected_to": str(engine.url), "columns_found": columns}
+    except Exception as e:
+        return {"error": str(e)}
