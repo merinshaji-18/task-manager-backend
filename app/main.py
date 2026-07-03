@@ -33,6 +33,7 @@ def repair_database():
             # Fix Users
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_access_token VARCHAR;"))
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_refresh_token VARCHAR;"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_token_expiry VARCHAR;"))
             # Fix Tasks
             conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS calendar_event_id VARCHAR;"))
             conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS google_event_id VARCHAR;"))
