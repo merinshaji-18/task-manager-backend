@@ -44,3 +44,12 @@ class SubTask(Base):
     is_completed = Column(Boolean, default=False)
 
     task = relationship("Task", back_populates="sub_tasks")
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"))
+    message = Column(String)
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

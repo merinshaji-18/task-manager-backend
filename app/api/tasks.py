@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Form
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.database.connection import get_db
-from app.models.task import Task, Attachment, SubTask
+from app.models.task import Task, Attachment, SubTask, Notification
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskResponse, TaskUpdate
 from app.api.auth import get_current_user
@@ -151,6 +151,8 @@ def update_task_full(task_id: int, updated_data: TaskCreate, db: Session = Depen
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     # --- NEW: COLLISION CHECK FOR UPDATE ---
+    if updated_data.due_date != task.due_date:
+        task.notification_sent = False
     if updated_data.due_date:
         start_buffer = updated_data.due_date - timedelta(minutes=59)
         end_buffer = updated_data.due_date + timedelta(minutes=59)
@@ -269,3 +271,34 @@ def get_upcoming_notifications(
         }
         for task in tasks
     ]
+@router.get("/notifications/list")
+def get_notifications(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    return db.query(Notification).filter(Notification.user_id == current_user.id)\
+             .order_by(Notification.is_read.asc(), Notification.created_at.desc()).limit(10).all()
+
+@router.patch("/notifications/{notif_id}/read")
+def mark_read(notif_id: int, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+    notif = db.query(Notification).filter(Notification.id == notif_id, Notification.user_id == current_user.id).first()
+    if notif:
+        notif.is_read = True
+        db.commit()
+    return {"status": "ok"}
+
+@router.patch("/{task_id}/quick-status")
+def quick_update_status(task_id: int, new_status: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task.status = new_status
+    db.commit()
+    
+    # If you have Google Calendar enabled, we should update that too
+    if current_user.google_access_token and task.google_event_id:
+        try:
+            from app.core.google_calendar import update_calendar_event
+            update_calendar_event(current_user, task)
+        except Exception as e:
+            print(f"Calendar sync failed during quick-status: {e}")
+            
+    return {"message": "Status updated"}
