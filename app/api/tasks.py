@@ -48,12 +48,16 @@ def validate_future_date(due_date: Optional[datetime]):
 def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # --- NEW: COLLISION CHECK ---
     if task.due_date:
-        # Check for any task starting 59 mins before or after this time
-        start_buffer = task.due_date - timedelta(minutes=59)
-        end_buffer = task.due_date + timedelta(minutes=59)
-        
+        # FIX: Ensure timezone awareness for collision check
+        target_date = task.due_date
+        if target_date.tzinfo is None:
+            target_date = target_date.replace(tzinfo=timezone.utc)
+            
+        start_buffer = target_date - timedelta(minutes=59)
+        end_buffer = target_date + timedelta(minutes=59)        
         conflict = db.query(Task).filter(
             Task.owner_id == current_user.id,
+            Task.status == 'pending',
             Task.due_date > start_buffer,
             Task.due_date < end_buffer
         ).first()
@@ -154,13 +158,18 @@ def update_task_full(task_id: int, updated_data: TaskCreate, db: Session = Depen
     if updated_data.due_date != task.due_date:
         task.notification_sent = False
     if updated_data.due_date:
-        start_buffer = updated_data.due_date - timedelta(minutes=59)
-        end_buffer = updated_data.due_date + timedelta(minutes=59)
+        target_date = updated_data.due_date
+        if target_date.tzinfo is None:
+            target_date = target_date.replace(tzinfo=timezone.utc)
+
+        start_buffer = target_date - timedelta(minutes=59)
+        end_buffer = target_date + timedelta(minutes=59)
         
         # Check for conflicts, but EXCLUDE the current task itself
         conflict = db.query(Task).filter(
             Task.owner_id == current_user.id,
             Task.id != task_id, 
+            Task.status=='pending',
             Task.due_date > start_buffer,
             Task.due_date < end_buffer
         ).first()
