@@ -204,8 +204,9 @@ def get_me(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "full_name": current_user.full_name,
         "bio": current_user.bio,
-        "profile_pic": current_user.profile_pic,# Added this
-        "is_admin": current_user.is_admin
+        "profile_pic": current_user.profile_pic,
+        "is_admin": current_user.is_admin,
+        "google_access_token": current_user.google_access_token is not None
     }
 # --- 2. GLOBAL STATS ROUTE ---
 @router.get("/admin/analytics")

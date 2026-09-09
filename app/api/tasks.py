@@ -157,6 +157,7 @@ def update_task_full(task_id: int, updated_data: TaskCreate, db: Session = Depen
     # --- NEW: COLLISION CHECK FOR UPDATE ---
     if updated_data.due_date != task.due_date:
         task.notification_sent = False
+        task.deadline_acknowledged = False
     if updated_data.due_date:
         target_date = updated_data.due_date
         if target_date.tzinfo is None:
@@ -292,6 +293,15 @@ def mark_read(notif_id: int, db: Session = Depends(get_db), current_user = Depen
         notif.is_read = True
         db.commit()
     return {"status": "ok"}
+
+@router.patch("/{task_id}/acknowledge-overdue")
+def acknowledge_overdue(task_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    task = db.query(Task).filter(Task.id == task_id, Task.owner_id == current_user.id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task.deadline_acknowledged = True
+    db.commit()
+    return {"message": "Deadline acknowledged"}
 
 @router.patch("/{task_id}/quick-status")
 def quick_update_status(task_id: int, new_status: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

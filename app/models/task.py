@@ -16,6 +16,7 @@ class Task(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     owner_id = Column(Integer, ForeignKey("users.id"))# Link to User
     notification_sent = Column(Boolean, default=False)
+    deadline_acknowledged = Column(Boolean, default=False)
     calendar_event_id = Column(String, nullable=True)
     google_event_id = Column(String, nullable=True)
 

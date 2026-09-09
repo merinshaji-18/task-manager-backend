@@ -44,6 +44,7 @@ class TaskResponse(TaskBase):
     sub_tasks: List[SubTaskResponse] = []
     attachments: List[AttachmentResponse] = []
     is_overdue: bool = False
+    deadline_acknowledged: bool = False
     @classmethod
     def from_orm(cls, obj):
         data = cls.model_validate(obj)

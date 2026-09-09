@@ -42,38 +42,41 @@ def create_calendar_event(user, task):
         return None
     
     service = get_calendar_service(user)
-    
-    # ISSUE 1 FIX: Added Client Name [Category] to the Summary
     summary = f"[{task.category}] {task.title}" if task.category else task.title
     
-    start_time = task.due_date.isoformat()
-    end_time = (task.due_date + timedelta(hours=1)).isoformat()
+    start_dt = task.due_date if task.due_date.tzinfo else task.due_date.replace(tzinfo=timezone.utc)
+    end_dt = start_dt + timedelta(hours=1)
 
     event = {
         "summary": summary,
         "description": task.description or "Created via Task Manager",
-        "start": {"dateTime": start_time, "timeZone": "Asia/Kolkata"},
-        "end": {"dateTime": end_time, "timeZone": "Asia/Kolkata"},
+        "start": {"dateTime": start_dt.isoformat()},
+        "end": {"dateTime": end_dt.isoformat()},
     }
     
     result = service.events().insert(calendarId="primary", body=event).execute()
     return result.get('id')
 
-# ISSUE 2 FIX: Update Event
 def update_calendar_event(user, task):
     if not task.google_event_id or not task.due_date:
         return
     try:
         service = get_calendar_service(user)
         summary = f"[{task.category}] {task.title}" if task.category else task.title
+        
+        start_dt = task.due_date if task.due_date.tzinfo else task.due_date.replace(tzinfo=timezone.utc)
+        end_dt = start_dt + timedelta(hours=1)
+        
         event = {
             "summary": summary,
             "description": task.description or "",
-            "start": {"dateTime": task.due_date.isoformat(), "timeZone": "Asia/Kolkata"},
-            "end": {"dateTime": (task.due_date + timedelta(hours=1)).isoformat(), "timeZone": "Asia/Kolkata"},
+            "start": {"dateTime": start_dt.isoformat()},
+            "end": {"dateTime": end_dt.isoformat()},
         }
         service.events().update(calendarId="primary", eventId=task.google_event_id, body=event).execute()
     except Exception as e:
+        with open("C:/Users/Merin/Desktop/task-manager-api/google_error.log", "a") as f:
+            f.write(f"Update failed: {e}\n")
         print(f"Update failed: {e}")
 
 # ISSUE 2 FIX: Delete Event
